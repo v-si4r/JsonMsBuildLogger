@@ -5,6 +5,7 @@ using JsonMsBuildLogger.Diagnostics;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Utilities;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace JsonMsBuildLogger
 {
@@ -31,22 +32,29 @@ namespace JsonMsBuildLogger
         #region fields
 
         /// <summary>
-        /// The MsBuild log file stream
+        /// MsBuild log file stream
         /// </summary>
         private StreamWriter streamWriter;
 
         /// <summary>
-        /// The JSON writer used to write into MsBuild log file stream <see cref="streamWriter"/>
+        /// JSON writer used to write into MsBuild log file stream <see cref="streamWriter"/>
         /// </summary>
         private JsonWriter jsonWriter;
+
+        /// <summary>
+        /// Default JSON serializer
+        /// </summary>
+        private JsonSerializer serializer;
 
         /// <summary>
         /// The flag indicates whether that logger is disposed
         /// </summary>
         private bool disposed = false;
 
-        // ?
-        private int indent;
+        /// <summary>
+        /// The flag indicates whether that first event is logged
+        /// </summary>
+        private bool firstEventIsLogged = false;
 
 #if DEBUG
 
@@ -87,15 +95,22 @@ namespace JsonMsBuildLogger
             var logFile = GetLogFilePath(this.Parameters);
 #if DEBUG
             this.diagnostics = DiagnosticsProvider.GetLogger();
-#endif
+#endif     
+
             try
             {
                 // open the file
                 this.streamWriter = new StreamWriter(logFile);
 
+                // start JSON logging
+                this.BeginJsonArray();
+
                 // initialize JSON.NET writer
                 this.jsonWriter = new JsonTextWriter(this.streamWriter);
                 this.jsonWriter.Formatting = Formatting.Indented;
+
+                // initialize serializer
+                this.serializer = new JsonSerializer();
             }
             catch (Exception ex)
             {
@@ -123,118 +138,64 @@ namespace JsonMsBuildLogger
                     // Unexpected failure
                     throw;
                 }
-            }
-
-
-            eventSource.ProjectStarted += new ProjectStartedEventHandler(HandleEventSourceProjectStarted);
-            //eventSource.TaskStarted += new TaskStartedEventHandler(eventSource_TaskStarted);
-            //eventSource.MessageRaised += new BuildMessageEventHandler(eventSource_MessageRaised);
-            //eventSource.WarningRaised += new BuildWarningEventHandler(eventSource_WarningRaised);
-            //eventSource.ErrorRaised += new BuildErrorEventHandler(eventSource_ErrorRaised);
-            //eventSource.ProjectFinished += new ProjectFinishedEventHandler(eventSource_ProjectFinished);
-        }
-
-        #region CP
-        void eventSource_ErrorRaised(object sender, BuildErrorEventArgs e)
-        {
-            // BuildErrorEventArgs adds LineNumber, ColumnNumber, File, amongst other parameters
-            string line = String.Format(": ERROR {0}({1},{2}): ", e.File, e.LineNumber, e.ColumnNumber);
-            WriteLineWithSenderAndMessage(line, e);
-        }
-
-        void eventSource_WarningRaised(object sender, BuildWarningEventArgs e)
-        {
-            // BuildWarningEventArgs adds LineNumber, ColumnNumber, File, amongst other parameters
-            string line = String.Format(": Warning {0}({1},{2}): ", e.File, e.LineNumber, e.ColumnNumber);
-            WriteLineWithSenderAndMessage(line, e);
-        }
-
-        void eventSource_MessageRaised(object sender, BuildMessageEventArgs e)
-        {
-            // BuildMessageEventArgs adds Importance to BuildEventArgs
-            // Let's take account of the verbosity setting we've been passed in deciding whether to log the message
-            if ((e.Importance == MessageImportance.High && IsVerbosityAtLeast(LoggerVerbosity.Minimal))
-                || (e.Importance == MessageImportance.Normal && IsVerbosityAtLeast(LoggerVerbosity.Normal))
-                || (e.Importance == MessageImportance.Low && IsVerbosityAtLeast(LoggerVerbosity.Detailed))
-                )
-            {
-                WriteLineWithSenderAndMessage(String.Empty, e);
-            }
-        }
-
-        void eventSource_TaskStarted(object sender, TaskStartedEventArgs e)
-        {
-            // TaskStartedEventArgs adds ProjectFile, TaskFile, TaskName
-            // To keep this log clean, this logger will ignore these events.
-        }
-
-        private void HandleEventSourceProjectStarted(object sender, ProjectStartedEventArgs e)
-        {
-            // ProjectStartedEventArgs adds ProjectFile, TargetNames
-            // Just the regular message string is good enough here, so just display that.
-            //WriteLine(String.Empty, e);
-            //indent++;
-
-            this.WriteLine(MsBuildEventType.ProjectStarted, string.Empty, e);
-        }
-
-        void eventSource_ProjectFinished(object sender, ProjectFinishedEventArgs e)
-        {
-            // The regular message string is good enough here too.
-            indent--;
-            WriteLine(String.Empty, e);
+            }            
+        
+            // Occurs when a build raises any other type of build event.
+            eventSource.AnyEventRaised += this.HandleEventSourceEvent;           
         }
 
         /// <summary>
-        /// Write a line to the log, adding the SenderName and Message
-        /// (these parameters are on all MSBuild event argument objects)
+        /// Handles the event source event of any type
         /// </summary>
-        private void WriteLineWithSenderAndMessage(string line, BuildEventArgs e)
-        {
-            if (0 == String.Compare(e.SenderName, "MSBuild", true /*ignore case*/))
-            {
-                // Well, if the sender name is MSBuild, let's leave it out for prettiness
-                WriteLine(line, e);
-            }
-            else
-            {
-                WriteLine(e.SenderName + ": " + line, e);
-            }
-        }
-
-        /// <summary>
-        /// Just write a line to the log
-        /// </summary>
-        private void WriteLine(string line, BuildEventArgs e)
-        {
-            for (int i = indent; i > 0; i--)
-            {
-                streamWriter.Write("\t");
-            }
-            streamWriter.WriteLine(line + e.Message);
-        }
-
-        /// <summary>
-        /// Just write a line to the log
-        /// </summary>
-        private void WriteLine(MsBuildEventType eventType, string line, BuildEventArgs e)
+        /// <param name="sender">The sender.</param>
+        /// <param name="e">The <see cref="BuildEventArgs"/> instance containing the event data.</param>
+        private void HandleEventSourceEvent(object sender, BuildEventArgs e)
         {
             try
             {
-                var bundle = new JsonBundle
-                {
-                    EventType = eventType,
-                    Message = line,
-                    BuildEventArgs = e
-                };
+                // write JSON element line break after previous element
+                this.AddJsonArrayLineBreak();
 
-                JsonSerializer serializer = new JsonSerializer();
-                serializer.Serialize(this.jsonWriter, bundle);
+                // write build event
+                var rootObject = new JObject();
+                rootObject.Add(e.GetType().Name, JObject.FromObject(e));
+                this.serializer.Serialize(this.jsonWriter, rootObject);
             }
             catch (Exception ex)
             {
                 this.diagnostics.WriteException(ex);
             }
+        }
+
+        /// <summary>
+        /// Begins the JSON array at log file
+        /// </summary>
+        private void BeginJsonArray()
+        {
+            this.streamWriter.Write('[');
+        }
+
+        /// <summary>
+        /// Adds the JSON array line break.
+        /// </summary>
+        private void AddJsonArrayLineBreak()
+        {
+            if (this.firstEventIsLogged)
+            {
+                this.streamWriter.WriteLine(',');
+            }
+            else
+            {
+                this.firstEventIsLogged = true;
+            }
+        }
+
+        /// <summary>
+        /// Closes the JSON array at log file
+        /// </summary>
+        private void CloseJsonArray()
+        {
+            this.streamWriter.Write(']');
         }
 
         /// <summary>
@@ -245,8 +206,6 @@ namespace JsonMsBuildLogger
         {
             this.Dispose();
         }
-
-        #endregion
 
         /// <summary>
         /// Gets the log file path.
@@ -290,6 +249,9 @@ namespace JsonMsBuildLogger
                 if (disposing)
                 {
                     // dispose managed resources
+
+                    this.CloseJsonArray();
+
                     this.jsonWriter?.Close();
                     this.jsonWriter = null;
 

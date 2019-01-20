@@ -42,9 +42,7 @@
     <Compile Include="Diagnostics\DiagnosticsProvider.cs" />
     <Compile Include="Diagnostics\FileLoggerDiagnostics.cs" />
     <Compile Include="Diagnostics\ILoggerDiagnostics.cs" />
-    <Compile Include="JsonBundle.cs" />
     <Compile Include="JsonFileLogger.cs" />
-    <Compile Include="MsBuildEventType.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
