@@ -93,8 +93,12 @@ namespace JsonMsBuildLogger
         {
             // get log file path from incoming parameters
             var logFile = GetLogFilePath(this.Parameters);
+
+
 #if DEBUG
             this.diagnostics = DiagnosticsProvider.GetLogger();
+            this.diagnostics.WriteMessage($"Parameters: {this.Parameters}");
+            this.diagnostics.WriteMessage($"Verbosity level: {this.Verbosity}");
 #endif     
 
             try
@@ -138,10 +142,12 @@ namespace JsonMsBuildLogger
                     // Unexpected failure
                     throw;
                 }
-            }            
-        
+            }
+
             // Occurs when a build raises any other type of build event.
-            eventSource.AnyEventRaised += this.HandleEventSourceEvent;           
+            // Not sensitive to chosen MsBuild Verbosity level
+            // Default logger behavior 
+            eventSource.AnyEventRaised += this.HandleEventSourceEvent;
         }
 
         /// <summary>
@@ -151,8 +157,68 @@ namespace JsonMsBuildLogger
         /// <param name="e">The <see cref="BuildEventArgs"/> instance containing the event data.</param>
         private void HandleEventSourceEvent(object sender, BuildEventArgs e)
         {
+#if DEBUG
+            // log all events
+            this.diagnostics.WriteMessage($"{e.SenderName}: {e.GetType().Name} {e.Message}");
+#endif
+
             try
             {
+                switch (this.Verbosity)
+                {
+                    case LoggerVerbosity.Quiet:
+                        {
+                            if (e is BuildWarningEventArgs || e is BuildErrorEventArgs)
+                            {
+                                break;
+                            }
+
+                            return;
+                        }
+
+                    case LoggerVerbosity.Minimal:
+                        {
+                            if (e is BuildWarningEventArgs || e is BuildErrorEventArgs)
+                            {
+                                break;
+                            }
+
+                            var buildMessage = e as BuildMessageEventArgs;
+                            if (buildMessage?.Importance == MessageImportance.High)
+                            {
+                                break;
+                            }
+
+                            return;
+                        }
+
+                    case LoggerVerbosity.Normal:
+                        {
+                            if (e is BuildWarningEventArgs || e is BuildErrorEventArgs)
+                            {
+                                break;
+                            }
+
+                            var buildMessage = e as BuildMessageEventArgs;
+                            if (buildMessage?.Importance == MessageImportance.High || buildMessage?.Importance == MessageImportance.Normal)
+                            {
+                                break;
+                            }
+
+                            return;
+                        }
+
+                   case LoggerVerbosity.Detailed:
+                        {
+                            if (e is BuildWarningEventArgs || e is BuildErrorEventArgs || e is BuildMessageEventArgs)
+                            {
+                                break;
+                            }
+
+                            return;
+                        }
+                }
+
                 // write JSON element line break after previous element
                 this.AddJsonArrayLineBreak();
 

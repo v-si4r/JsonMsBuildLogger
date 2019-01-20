@@ -68,7 +68,7 @@ namespace JsonMsBuildLogger.Diagnostics
             if (this.diagnosticStreamWriter == null)
             {
                 // Open the file
-                this.diagnosticStreamWriter = new StreamWriter($"{DateTime.Now:yyyyMMddHHmmss}Diag.log");
+                this.diagnosticStreamWriter = new StreamWriter($"_diag{DateTime.Now:yyyyMMdd}.log", false);
             }
 
             return this.diagnosticStreamWriter;
